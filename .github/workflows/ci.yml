@@ -40,6 +40,14 @@ jobs:
           timeout: 45
           # Let the site still publish when only monoruby fails.
           experimental: true
+        # IronRuby (Ruby on .NET) is not in ruby/setup-ruby either: CRuby runs
+        # mspec and the latest self-contained Linux release of Largo/ironruby
+        # (installed below) is the --target. It has no C API, like JRuby.
+        - name: ironruby
+          ruby: ruby-4.0
+          bin: /home/runner/ironruby/ironruby
+          target: /home/runner/ironruby/ironruby
+          experimental: true
     runs-on: ubuntu-latest
     timeout-minutes: ${{ matrix.timeout || 360 }}
     continue-on-error: ${{ matrix.experimental || false }}
@@ -56,10 +64,38 @@ jobs:
       with:
         rubyspec: "true"
 
-    - if: matrix.name != 'ruby' && matrix.name != 'monoruby'
+    - name: Install IronRuby
+      if: matrix.name == 'ironruby'
+      id: ironruby
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        tag=$(gh release view -R Largo/ironruby --json tagName --jq .tagName)
+        gh release download "$tag" -R Largo/ironruby -p "ironruby-${tag#v}-linux-x64.tar.gz" -O ir.tar.gz
+        mkdir ~/ironruby && tar xzf ir.tar.gz -C ~/ironruby --strip-components=1 && rm ir.tar.gz
+        ~/ironruby/ironruby -v
+        echo "tag=$tag" >> $GITHUB_OUTPUT
+        # ruby/spec and mspec at the revisions that IronRuby release is tested with
+        ci=$(gh api "repos/Largo/ironruby/contents/.github/workflows/ci.yml?ref=$tag" --jq .content | base64 -d)
+        echo "spec=$(echo "$ci" | sed -n 's/^ *SPEC_REF: *//p' | head -1)" >> $GITHUB_OUTPUT
+        echo "mspec=$(echo "$ci" | sed -n 's/^ *MSPEC_REF: *//p' | head -1)" >> $GITHUB_OUTPUT
+    - if: matrix.name == 'ironruby'
+      uses: actions/checkout@v6
+      with:
+        repository: ruby/spec
+        ref: ${{ steps.ironruby.outputs.spec }}
+        path: spec/ruby
+    - if: matrix.name == 'ironruby'
+      uses: actions/checkout@v6
+      with:
+        repository: ruby/mspec
+        ref: ${{ steps.ironruby.outputs.mspec }}
+        path: spec/mspec
+
+    - if: matrix.name != 'ruby' && matrix.name != 'monoruby' && matrix.name != 'ironruby'
       id: ruby_revision
       run: echo "sha=$(ruby -e 'puts RUBY_REVISION')" >> $GITHUB_OUTPUT
-    - if: matrix.name != 'ruby' && matrix.name != 'monoruby'
+    - if: matrix.name != 'ruby' && matrix.name != 'monoruby' && matrix.name != 'ironruby'
       uses: actions/checkout@v6
       with:
         repository: ${{ matrix.repo }}
@@ -75,6 +111,8 @@ jobs:
       if: matrix.name == 'ruby'
 
     - run: mkdir ${{ matrix.name }}
+    - if: matrix.name == 'ironruby'
+      run: echo "${{ steps.ironruby.outputs.tag }}" > ironruby/IRONRUBY_VERSION
 
     - name: Save RUBY_VERSION
       run: ${{ matrix.bin || 'ruby' }} -e 'puts RUBY_VERSION' > ${{ matrix.name }}/RUBY_VERSION
@@ -122,9 +160,9 @@ jobs:
     # emits escape sequences that CRuby's Psych can't parse. Also keeps the
     # committed yml files small (drops tens of KB of failure text).
     - name: Strip yaml exceptions
-      if: matrix.name == 'monoruby'
+      if: matrix.name == 'monoruby' || matrix.name == 'ironruby'
       run: |
-        for f in monoruby/*.yml; do
+        for f in ${{ matrix.name }}/*.yml; do
           ruby -e '
             p = ARGV[0]
             src = File.read(p)
@@ -174,7 +212,7 @@ jobs:
         ruby-version: 3.2
 
     - run: mkdir site
-    - run: ruby analyze_per_file.rb --html ruby/*.yml truffleruby/*.yml jruby/*.yml monoruby/*.yml > site/index.html
+    - run: ruby analyze_per_file.rb --html ruby/*.yml truffleruby/*.yml jruby/*.yml monoruby/*.yml ironruby/*.yml > site/index.html
 
     - name: Upload artifact
       uses: actions/upload-pages-artifact@v5

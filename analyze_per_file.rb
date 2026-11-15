@@ -145,6 +145,9 @@ if HTML
       ruby_name = "CRuby #{major_minor}"
     elsif ruby == 'monoruby'
       ruby_name = 'monoruby dev'
+    elsif ruby == 'ironruby'
+      version_file = "#{ruby}/IRONRUBY_VERSION"
+      ruby_name = File.exist?(version_file) ? "IronRuby #{File.read(version_file).strip.delete_prefix('v')}" : 'IronRuby'
     else
       ruby_name = "#{ruby_name} dev"
     end
