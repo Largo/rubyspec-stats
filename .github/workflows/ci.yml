@@ -52,6 +52,9 @@ jobs:
           # end the process, which held the job for the full 6h. Categories
           # normally finish in under 3 minutes.
           mspec_prefix: timeout -k 5 600
+          # That spec hangs often, and when mspec's watchdog aborts the run no
+          # stats are written, losing all of core. Skip just that example.
+          mspec_args: -x 'Thread#kill kills the entire thread when a fiber is active'
           timeout: 45
           experimental: true
     runs-on: ubuntu-latest
@@ -128,7 +131,7 @@ jobs:
     # When a target can't fire it (see mspec_prefix above), the category
     # still ends up empty; use the log to identify the it, then tag it.
     - name: Set MSPEC
-      run: echo "MSPEC=${{ matrix.mspec_prefix }} spec/mspec/bin/mspec ci --timeout 60 --target ${{ matrix.target || '$(which ruby)' }} --marker . --format yaml --output stats.yml" >> $GITHUB_ENV
+      run: echo "MSPEC=${{ matrix.mspec_prefix }} spec/mspec/bin/mspec ci --timeout 60 --target ${{ matrix.target || '$(which ruby)' }} --marker . --format yaml --output stats.yml ${{ matrix.mspec_args }}" >> $GITHUB_ENV
 
     - name: language specs
       run: $MSPEC spec/ruby/language
