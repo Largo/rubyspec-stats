@@ -53,8 +53,6 @@ jobs:
           # end the process, which held the job for the full 6h. Categories
           # normally finish in under 3 minutes.
           mspec_prefix: timeout -k 5 600
-          # Excludes the examples that hang (see Install IronRuby).
-          mspec_args: -B /home/runner/ironruby-stats.mspec
           timeout: 45
           experimental: true
     runs-on: ubuntu-latest
@@ -83,12 +81,6 @@ jobs:
         gh release download "$tag" -R Largo/ironruby -p "ironruby-${tag#v}-linux-x64.tar.gz" -O ir.tar.gz
         mkdir ~/ironruby && tar xzf ir.tar.gz -C ~/ironruby --strip-components=1 && rm ir.tar.gz
         ~/ironruby/ironruby -v
-        # This example hangs often on v4.0.5, and when mspec's watchdog aborts
-        # the run no stats are written, losing all of core. Skip just that
-        # example. Fixed in Largo/ironruby 826a6252: drop this after v4.0.5.
-        cat > ~/ironruby-stats.mspec <<'EOF'
-        MSpecScript.set :xpatterns, [/\AThread#kill kills the entire thread when a fiber is active\z/]
-        EOF
         echo "tag=$tag" >> $GITHUB_OUTPUT
         # The C API's native shim ships in releases after v4.0.5: run the capi specs once it is there.
         if find ~/ironruby -name libironruby-capi.so | grep -q .; then echo "capi=true" >> $GITHUB_OUTPUT; fi
