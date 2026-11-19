@@ -42,7 +42,8 @@ jobs:
           experimental: true
         # IronRuby (Ruby on .NET) is not in ruby/setup-ruby either: CRuby runs
         # mspec and the latest self-contained Linux release of Largo/ironruby
-        # (installed below) is the --target. It has no C API, like JRuby.
+        # (installed below) is the --target. Its C API is tested once the release ships the
+        # shim (see Install IronRuby).
         - name: ironruby
           ruby: ruby-4.0
           bin: /home/runner/ironruby/ironruby
@@ -82,12 +83,15 @@ jobs:
         gh release download "$tag" -R Largo/ironruby -p "ironruby-${tag#v}-linux-x64.tar.gz" -O ir.tar.gz
         mkdir ~/ironruby && tar xzf ir.tar.gz -C ~/ironruby --strip-components=1 && rm ir.tar.gz
         ~/ironruby/ironruby -v
-        # This example hangs often, and when mspec's watchdog aborts the run
-        # no stats are written, losing all of core. Skip just that example.
+        # This example hangs often on v4.0.5, and when mspec's watchdog aborts
+        # the run no stats are written, losing all of core. Skip just that
+        # example. Fixed in Largo/ironruby 826a6252: drop this after v4.0.5.
         cat > ~/ironruby-stats.mspec <<'EOF'
         MSpecScript.set :xpatterns, [/\AThread#kill kills the entire thread when a fiber is active\z/]
         EOF
         echo "tag=$tag" >> $GITHUB_OUTPUT
+        # The C API's native shim ships in releases after v4.0.5: run the capi specs once it is there.
+        if find ~/ironruby -name libironruby-capi.so | grep -q .; then echo "capi=true" >> $GITHUB_OUTPUT; fi
         # ruby/spec and mspec at the revisions that IronRuby release is tested with
         ci=$(gh api "repos/Largo/ironruby/contents/.github/workflows/ci.yml?ref=$tag" --jq .content | base64 -d)
         echo "spec=$(echo "$ci" | sed -n 's/^ *SPEC_REF: *//p' | head -1)" >> $GITHUB_OUTPUT
@@ -165,9 +169,9 @@ jobs:
     - name: capi specs
       run: $MSPEC spec/ruby/optional/capi
       continue-on-error: true
-      if: matrix.capi
+      if: matrix.capi || steps.ironruby.outputs.capi
     - run: mv stats.yml ${{ matrix.name }}/capi.yml
-      if: matrix.capi
+      if: matrix.capi || steps.ironruby.outputs.capi
 
     # Text-strip the `exceptions:` block — monoruby's YAML output occasionally
     # emits escape sequences that CRuby's Psych can't parse. Also keeps the
