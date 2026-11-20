@@ -148,6 +148,11 @@ if HTML
     elsif ruby == 'ironruby'
       version_file = "#{ruby}/IRONRUBY_VERSION"
       ruby_name = File.exist?(version_file) ? "IronRuby #{File.read(version_file).strip.delete_prefix('v')}" : 'IronRuby'
+      revision_file = "#{ruby}/IRONRUBY_REVISION"
+      if File.exist?(revision_file)
+        revision = File.read(revision_file).strip
+        ruby_name += %Q{ <a href="https://github.com/Largo/ironruby/commit/#{revision}">#{revision[0, 7]}</a>}
+      end
     else
       ruby_name = "#{ruby_name} dev"
     end

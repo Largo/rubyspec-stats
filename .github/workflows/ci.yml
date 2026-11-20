@@ -41,9 +41,8 @@ jobs:
           # Let the site still publish when only monoruby fails.
           experimental: true
         # IronRuby (Ruby on .NET) is not in ruby/setup-ruby either: CRuby runs
-        # mspec and the latest self-contained Linux release of Largo/ironruby
-        # (installed below) is the --target. Its C API is tested once the release ships the
-        # shim (see Install IronRuby).
+        # mspec and Largo/ironruby's master, built and packaged as a self-contained
+        # Linux download (Build IronRuby master, below), is the --target, C API included.
         - name: ironruby
           ruby: ruby-4.0
           bin: /home/runner/ironruby/ironruby
@@ -53,7 +52,7 @@ jobs:
           # end the process, which held the job for the full 6h. Categories
           # normally finish in under 3 minutes.
           mspec_prefix: timeout -k 5 600
-          timeout: 45
+          timeout: 75
           experimental: true
     runs-on: ubuntu-latest
     timeout-minutes: ${{ matrix.timeout || 360 }}
@@ -71,23 +70,45 @@ jobs:
       with:
         rubyspec: "true"
 
-    - name: Install IronRuby
+    # IronRuby master, built as its release workflow packages a download (Largo/ironruby's
+    # .github/workflows/release.yml): the DLR and prism at the revisions its CI pins, the native
+    # libraries it ships (libprism, markly, librbs and the C API shim), then
+    # Util/package-release.sh. The archive unpacks where a release used to go.
+    - if: matrix.name == 'ironruby'
+      uses: actions/setup-dotnet@v5
+      with:
+        dotnet-version: 10.0.x
+    - if: matrix.name == 'ironruby'
+      uses: actions/checkout@v6
+      with:
+        repository: Largo/ironruby
+        ref: master
+        path: ironruby-src
+    - name: Build IronRuby master
       if: matrix.name == 'ironruby'
       id: ironruby
-      env:
-        GH_TOKEN: ${{ github.token }}
+      working-directory: ironruby-src
       run: |
-        tag=$(gh release view -R Largo/ironruby --json tagName --jq .tagName)
-        gh release download "$tag" -R Largo/ironruby -p "ironruby-${tag#v}-linux-x64.tar.gz" -O ir.tar.gz
-        mkdir ~/ironruby && tar xzf ir.tar.gz -C ~/ironruby --strip-components=1 && rm ir.tar.gz
+        pin() { sed -n "s/^ *$1: *//p" .github/workflows/ci.yml | head -1; }
+        git clone -q https://github.com/IronLanguages/dlr ../dlr
+        git -C ../dlr checkout -q "$(pin DLR_REF)"
+        for patch in Build/dlr-patches/*.patch; do git -C ../dlr apply "$PWD/$patch"; done
+        git clone -q https://github.com/ruby/prism ../prism
+        git -C ../prism checkout -q "$(pin PRISM_REF)"
+        (cd ../prism && ruby templates/template.rb && make shared)
+        bash Util/build-markly.sh
+        Util/build-librbs.sh
+        bash Util/build-capi.sh
+        sudo apt-get update -qq && sudo apt-get install -y -qq libsqlite3-0 unzip
+        version=$(sed -n 's/.*DisplayVersion = "\(.*\)";.*/\1/p' Src/Ruby/CurrentVersion.cs)
+        IR_TFM=net10.0 IR_VERSION="$version+$(git rev-parse --short HEAD)" Util/package-release.sh linux-x64 "$RUNNER_TEMP/dist"
+        mkdir ~/ironruby && tar xzf "$RUNNER_TEMP"/dist/ironruby-*-linux-x64.tar.gz -C ~/ironruby --strip-components=1
         ~/ironruby/ironruby -v
-        echo "tag=$tag" >> $GITHUB_OUTPUT
-        # The C API's native shim ships in releases after v4.0.5: run the capi specs once it is there.
+        echo "revision=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
         if find ~/ironruby -name libironruby-capi.so | grep -q .; then echo "capi=true" >> $GITHUB_OUTPUT; fi
-        # ruby/spec and mspec at the revisions that IronRuby release is tested with
-        ci=$(gh api "repos/Largo/ironruby/contents/.github/workflows/ci.yml?ref=$tag" --jq .content | base64 -d)
-        echo "spec=$(echo "$ci" | sed -n 's/^ *SPEC_REF: *//p' | head -1)" >> $GITHUB_OUTPUT
-        echo "mspec=$(echo "$ci" | sed -n 's/^ *MSPEC_REF: *//p' | head -1)" >> $GITHUB_OUTPUT
+        # ruby/spec and mspec at the revisions IronRuby master is tested with
+        echo "spec=$(pin SPEC_REF)" >> $GITHUB_OUTPUT
+        echo "mspec=$(pin MSPEC_REF)" >> $GITHUB_OUTPUT
     - if: matrix.name == 'ironruby'
       uses: actions/checkout@v6
       with:
@@ -121,7 +142,9 @@ jobs:
 
     - run: mkdir ${{ matrix.name }}
     - if: matrix.name == 'ironruby'
-      run: echo "${{ steps.ironruby.outputs.tag }}" > ironruby/IRONRUBY_VERSION
+      run: |
+        echo dev > ironruby/IRONRUBY_VERSION
+        echo "${{ steps.ironruby.outputs.revision }}" > ironruby/IRONRUBY_REVISION
 
     - name: Save RUBY_VERSION
       run: ${{ matrix.bin || 'ruby' }} -e 'puts RUBY_VERSION' > ${{ matrix.name }}/RUBY_VERSION
